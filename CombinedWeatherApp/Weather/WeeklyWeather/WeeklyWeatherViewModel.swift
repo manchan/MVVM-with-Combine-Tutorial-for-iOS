@@ -29,59 +29,67 @@
 import SwiftUI
 import Combine
 
-// 1
-class WeeklyWeatherViewModel: ObservableObject, Identifiable {
-  // 2
-  @Published var city: String = ""
-  
-  @Published var todaysWeatherEmoji: String = ""
+class WeeklyWeatherViewModel: ObservableObject {
 
-  // 3
+  @Published var city: String = ""
+  @Published var todaysWeatherEmoji: String = ""
   @Published var dataSource: [DailyWeatherRowViewModel] = []
 
   private let weatherFetcher: WeatherFetchable
+  private var disposables = [AnyCancellable]()
 
-  // 4
-  private var disposables = Set<AnyCancellable>()
-
-  // 1
   init(
     weatherFetcher: WeatherFetchable,
     scheduler: DispatchQueue = DispatchQueue(label: "WeatherViewModel")
   ) {
     self.weatherFetcher = weatherFetcher
-    
-    // 2
-    _ = $city
-      // 3
-      .dropFirst(1)
-      // 4
-      .debounce(for: .seconds(0.5), scheduler: scheduler)
-      // 5
-      .sink(receiveValue: fetchWeather(forCity:))
+
+    let _fetchWeather = PassthroughSubject<String, Never>()
+
+    $city
+    .filter { !$0.isEmpty }
+    .debounce(for: .seconds(0.5), scheduler: scheduler)
+    .sink(receiveValue: { _fetchWeather.send($0) })
+    .store(in: &disposables)
+
+    _fetchWeather
+    .map { city -> AnyPublisher<Result<[DailyWeatherRowViewModel], WeatherError>, Never> in
+      weatherFetcher.weeklyWeatherForecast(forCity: city)
+        .prefix(1)
+        .map { Result.success(Array.removeDuplicates($0.list.map(DailyWeatherRowViewModel.init)))}
+        .catch { Just(Result.failure($0)) }
+        .eraseToAnyPublisher()
+    }
+    .switchToLatest()
+    .receive(on: DispatchQueue.main)
+    .sink(receiveValue: { [weak self] result in
+      guard let self = self else { return }
+      switch result {
+      case let .success(forecast):
+        self.dataSource = forecast
+        self.todaysWeatherEmoji = forecast.first?.emoji ?? ""
+
+      case .failure:
+        self.dataSource = []
+        self.todaysWeatherEmoji = ""
+      }
+    })
+    .store(in: &disposables)
   }
   
   func fetchWeather(forCity city: String) {
-    // 1
+
     weatherFetcher.weeklyWeatherForecast(forCity: city)
       .map { response in
-        // 2
         response.list.map(DailyWeatherRowViewModel.init)
       }
-
-      // 3
       .map(Array.removeDuplicates)
-
-      // 4
       .receive(on: DispatchQueue.main)
-
-      // 5
       .sink(
         receiveCompletion: { [weak self] value in
           guard let self = self else { return }
           switch value {
           case .failure:
-            // 6
             self.dataSource = []
             self.todaysWeatherEmoji = ""
           case .finished:
@@ -91,11 +99,8 @@ class WeeklyWeatherViewModel: ObservableObject, Identifiable {
         receiveValue: { [weak self] forecast in
           guard let self = self else { return }
           self.todaysWeatherEmoji = forecast.first?.emoji ?? ""
-          // 7
           self.dataSource = forecast
       })
-
-      // 8
       .store(in: &disposables)
   }
 }
