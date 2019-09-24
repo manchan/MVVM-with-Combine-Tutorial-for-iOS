@@ -76,33 +76,6 @@ class WeeklyWeatherViewModel: ObservableObject {
     })
     .store(in: &disposables)
   }
-  
-  func fetchWeather(forCity city: String) {
-
-    weatherFetcher.weeklyWeatherForecast(forCity: city)
-      .map { response in
-        response.list.map(DailyWeatherRowViewModel.init)
-      }
-      .map(Array.removeDuplicates)
-      .receive(on: DispatchQueue.main)
-      .sink(
-        receiveCompletion: { [weak self] value in
-          guard let self = self else { return }
-          switch value {
-          case .failure:
-            self.dataSource = []
-            self.todaysWeatherEmoji = ""
-          case .finished:
-            break
-          }
-        },
-        receiveValue: { [weak self] forecast in
-          guard let self = self else { return }
-          self.todaysWeatherEmoji = forecast.first?.emoji ?? ""
-          self.dataSource = forecast
-      })
-      .store(in: &disposables)
-  }
 }
 
 extension WeeklyWeatherViewModel {
